@@ -12,14 +12,15 @@ export function espacioInicial() {
 export function mensajeUsuario(err) {
   if (err?.name === 'QuotaExceededError')
     return 'No hay espacio para guardar. Exportá un respaldo desde Ajustes.';
+  if (err?.name === 'AbortError') return 'Se canceló el guardado. Lo anterior sigue guardado. Probá de nuevo.';
   if (err instanceof TypeError || err instanceof SyntaxError)
     return 'No pudimos leer los datos. Revisá la carga o elegí un respaldo exportado por FleetIQ.';
   if (err instanceof DOMException)
     return 'No pudimos guardar en este navegador. Probá de nuevo o exportá un respaldo desde Ajustes.';
-  const texto = (err.message || 'No pudimos guardar. Probá de nuevo.').replace(
-    /^(Lectura|Service|Plan|Reparación|Viaje|Cobro|Movimiento) [^:]+:\s*/,
-    '',
-  );
+  // Los ids internos (también los sueltos, como "a9d8…-…:") nunca se muestran.
+  const texto = (err.message || 'No pudimos guardar. Probá de nuevo.')
+    .replace(/^(Lectura|Service|Plan|Reparación|Viaje|Cobro|Movimiento) [^:]+:\s*/, '')
+    .replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:\s*/i, '');
   return M.formatoFecha(texto)
     .replace(/id repetido[^.]*\.?/gi, 'Esta carga ya existe.')
     .replace(/rango seguro/g, 'tamaño que podemos guardar')
@@ -39,6 +40,7 @@ export function textoProximo(p) {
 export const claseResultado = (valor) => (valor < 0 ? 'negativo' : valor > 0 ? 'positivo' : '');
 
 export function textoConfirmacion(texto, values, nombreCamion) {
+  if(values.confirmacionCheque)return values.confirmacionCheque;
   if (texto === 'Guardar cobro' && values.medio) {
     const retiene = values.tieneRetencion === 'si';
     return 'Cobro guardado: ' + detalleCobro({ ...values, retencionCentavos: retiene ? values.retencionCentavos : undefined }) +
@@ -71,3 +73,8 @@ export function textoConfirmacion(texto, values, nombreCamion) {
 export const nombreMedio = (medio) => ({ transferencia: 'Transferencia', efectivo: 'Efectivo', cheque: 'Cheque', echeq: 'E-cheq', otro: 'Otro' })[medio] ?? medio;
 
 export const detalleCobro = c => nombreMedio(c.medio) + ' ' + moneda(c.importeCentavos) + (c.retencionCentavos ? ' + retención ' + (c.retencionTipo === 'iibb' ? 'IIBB' : 'Otra') + ' ' + moneda(c.retencionCentavos) : '');
+
+export function confirmacionAcreditacion(c,fecha,confirmar) {
+  return !c.cobrableDesde || fecha>=c.cobrableDesde || confirmar('La fecha elegida es anterior a “Se puede cobrar desde” ('+M.formatoFecha(c.cobrableDesde)+'). Confirmá solo si la plata ya está disponible. ¿Querés acreditar igual?');
+}
+export function fechaEstadoCobro(c,palabras) { return [M.formatoFecha(c.fecha),palabras].filter(Boolean).join(' · '); }

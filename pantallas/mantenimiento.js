@@ -1,4 +1,5 @@
 import { textoProximo } from '../ui/formato.js';
+import { valorFormulario } from '../ui/validacion.js';
 import * as C from '../dominio/camiones.js';
 
 import * as M from '../dominio/vencimientos.js';
@@ -89,9 +90,10 @@ export function registrarMantenimiento(app) {
     f.form.insertBefore(proximo, mas);
     const actualizar = () => {
       const p = {};
-      for (const [n, { input, c }] of Object.entries(f.entradas))
-        p[n] = input.value ? (c.tipo === 'number' ? Number(input.value) : input.value) : undefined;
       try {
+        // Misma lectura que al guardar: "160.000" son 160.000 km también en el anticipo.
+        for (const [n, { input, c }] of Object.entries(f.entradas))
+          p[n] = input.value ? (c.tipo === 'number' ? valorFormulario(c, input.value) : input.value) : undefined;
         proximo.textContent = app.textoProximo(p);
       } catch (err) {
         proximo.textContent = app.mensajeUsuario(err);

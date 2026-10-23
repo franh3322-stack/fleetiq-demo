@@ -161,7 +161,8 @@ export function anularCobro(cobro       , fecha        , motivo        )        
   validarCobro(cobro); motivoValido(fecha, motivo);
   if (cobro.anulado) throw new Error(`Cobro ${cobro.id}: ya está anulado.`);
   if (esCheque(cobro) && fecha < (cobro.eventos?.at(-1)?.fecha ?? cobro.fecha)) throw Error('La fecha no puede ser anterior al cobro ni al evento anterior.');
-  return { ...cobro, anulado: { fecha, motivo } };
+  const revisado = esCheque(cobro) ? confirmarRevisionCheque(migrarCheque(cobro),fecha) : cobro;
+  return { ...revisado, anulado: { fecha, motivo } };
 }
 export function viajesAMovimientos(viajes                  )               {
   sinRepetidos(viajes, 'Viaje');
@@ -222,7 +223,7 @@ function validarEventos(c       )       {
     } else if(e.tipo==='deshacer') {
       const previo=pila.pop();
       motivoValido(e.fecha,e.motivo );
-      if(!previo || e.deshace!==previo.id || JSON.stringify(b)!==JSON.stringify(previo.antes))throw Error('Deshacer inválido.');
+      if(!previo || e.deshace!==previo.id || JSON.stringify(b)!==JSON.stringify({...previo.antes,...(b.revisarCheque===false ? {revisarCheque:false} : {})}))throw Error('Deshacer inválido.');
     } else {
       let esperado           ;
       if(e.tipo==='estado') {
@@ -241,6 +242,7 @@ function validarEventos(c       )       {
         esperado={...a,resuelto:true};
       } else if(e.tipo==='revision') { esperado={...a,revisarCheque:false}; }
       else throw Error('Tipo de evento inválido.');
+      if(b.revisarCheque===false) esperado.revisarCheque=false;
       if(JSON.stringify(b)!==JSON.stringify(esperado))throw Error('El evento altera datos ajenos al paso.');
       pila.push(e);
     }
@@ -252,6 +254,7 @@ function agregar(c       , tipo                     , fecha        , despues    
   const base=c.eventos?.length ? c : migrarCheque(c);
   fechaValida(fecha);
   if(fecha < base.eventos .at(-1) .fecha || fecha<c.fecha)throw Error('La fecha no puede ser anterior al cobro ni al evento anterior.');
+  if (base.revisarCheque || tipo==='deshacer' && base.revisarCheque===false) despues={...despues,revisarCheque:false};
   const e             ={id:id ?? c.id+':'+base.eventos .length+':'+tipo,fecha,tipo,...(motivo!==undefined ? {motivo} : {}),antes:foto(base),despues, ...(deshace ? {deshace} : {})};
   const resultado={...structuredClone(base),eventos:[...base.eventos ,e]};
   for(const k of ['estadoCheque','estadoRetencion','depositadoFecha','acreditadoFecha','resuelto','revisarCheque']         )delete resultado[k];

@@ -1,3 +1,4 @@
+import { validarChofer, validarCombustible, tarifaTonelada, sincronizarLecturaGasto } from './dominio/operacion.js';
 import { resumenFlota } from './dominio/saldo-mensual.js';
 import { validarNuevoCamion, registrarLecturaKm } from './dominio/camiones.js';
 import { estadoCuentaCliente, viajesAMovimientos, partesCobro, validarCobro, migrarCheque, iniciarCheque, cambiarEstadoCheque } from './dominio/viajes-cobros.js';
@@ -17,7 +18,7 @@ export const moneda = (centavos        , decimales = false)         => new Intl.
 
 export function vacio(espacio        ) {
   if (!['demo', 'real'].includes(espacio)) throw Error('Elegí un espacio válido.');
-  return { version: 1, espacio, empresaId: espacio, camiones: [], lecturas: [], clientes: [], viajes: [], cobros: [], gastos: [], papeles: [], planes: [], services: [], reparaciones: [], archivos: [], historial: [], soporte: [],
+  return { version: 1, espacio, empresaId: espacio, choferes: [], camiones: [], lecturas: [], clientes: [], viajes: [], cobros: [], gastos: [], papeles: [], planes: [], services: [], reparaciones: [], archivos: [], historial: [], soporte: [],
     config: { anticipacionDias: 30, anticipacionKm: 1000, maxDiasLectura: 15, kmPorDiaMax: 1500, diasAcreditacion: 3, criterio: 'viaje' } };
 }
 export function demostracion(hoy        ) {
@@ -36,7 +37,22 @@ export function demostracion(hoy        ) {
   d.lecturas = d.camiones.map((c     , i        ) => ({ id: 'l' + i, empresaId, camionId: c.id, fecha: mes + '-01', km: 152300 + i * 10000, resultado: 'aceptada' }));
   d.papeles = [{ id: 'p1', empresaId, camionId: 'c1', tipo: 'Seguro · Ejemplo', vence: mes + '-05' }];
   d.planes = [{ id: 'pl1', empresaId, camionId: 'c1', tarea: 'Aceite · Ejemplo', cadaKm: 30000, cadaDias: 365, ultimoKm: 123000, ultimaFecha: mes + '-01', proximoKm: 153000 }];
+  d.choferes = [{id:'ch1',empresaId,nombre:'José · Ficticio',activo:true}];
+  d.viajes[0].choferId='ch1';
+  d.viajes.push({id:'vt',empresaId,camionId:'c1',clienteId:'cl1',choferId:'ch1',fecha:mes+'-04',origen:'Origen ficticio',destino:'Destino ficticio',estado:'planificado',modalidadTarifa:'tonelada',precioToneladaMilesimas:45600000,toneladasMilesimas:30250,tarifaCentavos:137940000,historialTarifa:[]});
+  Object.assign(d.gastos[0],{importeCentavos:25000000,litrosCentesimas:17000,km:152800,nota:'Carga ficticia'});
+  d.gastos.push({id:'g3',empresaId,camionId:'c1',fecha:mes+'-03',tipo:'gasto',categoria:'combustible',importeCentavos:25000000,litrosCentesimas:18000,km:153300,nota:'Carga ficticia'});
+  sincronizarLecturaGasto(d,d.gastos[0]); sincronizarLecturaGasto(d,d.gastos.at(-1));
   return d;
+}
+// Un papel renovado deja de contar mientras su renovación siga vigente; si se anula la renovación, vuelve a contar.
+export function papelVigente(p     , papeles       )          {
+  return !p.anulado && !(p.reemplazadoPor && papeles.some((x     ) => x.id === p.reemplazadoPor && !x.anulado));
+}
+export function versionesAnteriores(p     , papeles       )        {
+  const lista        = [], vistos = new Set([p.id]);
+  for (let a = papeles.find((x     ) => x.id === p.renuevaA); a && !vistos.has(a.id); a = papeles.find((x     ) => x.id === a.renuevaA)) { lista.push(a); vistos.add(a.id); }
+  return lista;
 }
 export function movimientos(d     ) {
   const ingresos = viajesAMovimientos(d.viajes);
@@ -51,7 +67,7 @@ export function cuentaCliente(d     , cliente     , hoy        ) {
 }
 export function validarDatos(d     , espacio        ) {
   if (!d || d.version !== 1 || d.espacio !== espacio || d.empresaId !== espacio) throw Error('El respaldo debe ser de este mismo espacio. Demostración y Mi empresa van separados.');
-  const listas = ['camiones','lecturas','clientes','viajes','cobros','gastos','papeles','planes','services','reparaciones','archivos','historial','soporte'];
+  const listas = [...(d.choferes !== undefined ? ['choferes'] : []), 'camiones','lecturas','clientes','viajes','cobros','gastos','papeles','planes','services','reparaciones','archivos','historial','soporte'];
   for (const k of listas) {
     if (!Array.isArray(d[k])) throw Error('El respaldo está incompleto.');
     const ids = new Set();
@@ -61,11 +77,17 @@ export function validarDatos(d     , espacio        ) {
       ids.add(r.id);
       if (k === 'historial' && r.antes?.empresaId && r.antes.empresaId !== espacio) throw Error('El historial pertenece a otro espacio.');
       if (r.camionId && !d.camiones.some((c     ) => c.id === r.camionId)) throw Error('Falta un camión del respaldo.');
+      if (r.choferId && !(d.choferes ?? []).some((c     ) => c.id === r.choferId)) throw Error('Falta un chofer del respaldo.');
       if (r.clienteId && !d.clientes.some((c     ) => c.id === r.clienteId)) throw Error('Falta un cliente del respaldo.');
       if (r.viajeId && !d.viajes.some((v     ) => v.id === r.viajeId && (!r.clienteId || v.clienteId === r.clienteId))) throw Error('La referencia al viaje no coincide.');
       if (r.archivoId && !d.archivos.some((a     ) => a.id === r.archivoId)) throw Error('Falta un archivo del respaldo.');
       if (r.entregaArchivoId && !d.archivos.some((a     ) => a.id === r.entregaArchivoId)) throw Error('Falta la constancia de entrega del respaldo.');
     }
+  }
+  (d.choferes ?? []).forEach((ch     ) => validarChofer(ch,d.choferes));
+  for (const v of d.viajes) {
+    if (v.modalidadTarifa !== undefined && !['cerrado','tonelada'].includes(v.modalidadTarifa)) throw Error('Revisá cómo se cobra el viaje.');
+    if (v.modalidadTarifa === 'tonelada' && tarifaTonelada(v.precioToneladaMilesimas,v.toneladasMilesimas) !== v.tarifaCentavos) throw Error('La tarifa por tonelada no coincide con el total.');
   }
   d.cobros.forEach(validarCobro);
   const c = d.config;
@@ -79,13 +101,28 @@ export function validarDatos(d     , espacio        ) {
   }
   d.clientes.forEach((v     ) => { if (typeof v.nombre !== 'string' || !v.nombre.trim()) throw Error('Falta el nombre de un cliente.'); estadoCuentaCliente(v, d.viajes, d.cobros, '2026-10-21'); cuentaCliente(d,v,'2026-10-21'); });
   d.papeles.forEach((v     ) => { if (typeof v.tipo !== 'string' || !v.tipo.trim()) throw Error('Falta el tipo de un papel.'); estadoPapel(v, '2026-10-21', c); });
+  for (const p of d.papeles) {
+    if (p.reemplazadoPor !== undefined && !d.papeles.some((x     ) => x.id === p.reemplazadoPor && x.renuevaA === p.id)) throw Error('Hay un papel renovado sin su renovación.');
+    if (p.renuevaA !== undefined && !p.anulado && !d.papeles.some((x     ) => x.id === p.renuevaA && x.reemplazadoPor === p.id)) throw Error('Hay una renovación de papel sin su papel anterior.');
+    const vistos = new Set([p.id]);
+    for (let a = p; a?.renuevaA; ) { a = d.papeles.find((x     ) => x.id === a.renuevaA); if (a && vistos.has(a.id)) throw Error('Las renovaciones de un papel forman un círculo.'); if (a) vistos.add(a.id); }
+  }
   d.planes.forEach((p     ) => { if (typeof p.tarea !== 'string' || !p.tarea.trim()) throw Error('Falta la tarea de un plan.'); limitesPlan(p); });
   for (const g of d.gastos) {
+    validarCombustible(g);
+    if (g.km !== undefined && !g.anulado && !d.lecturas.some((l     ) => l.gastoId === g.id && !l.anulado && l.camionId === g.camionId && l.km === g.km && l.fecha === g.fecha)) throw Error('Falta la lectura vinculada al combustible.');
     if (g.tipo !== 'gasto') throw Error('Hay un gasto que no se puede leer.');
     resumenFlota(espacio, g.fecha.slice(0, 7), d.camiones.map((c     ) => c.id), [g]);
   }
+  const gastosVistos = new Set();
+  for (const l of d.lecturas.filter((l     )=>l.gastoId)) {
+    if (gastosVistos.has(l.gastoId)) throw Error('Hay lecturas de combustible repetidas.');
+    gastosVistos.add(l.gastoId);
+    const g=d.gastos.find((g     )=>g.id===l.gastoId);
+    if (!g || (!l.anulado && (g.anulado || g.km!==l.km || g.camionId!==l.camionId || g.fecha!==l.fecha))) throw Error('La lectura no coincide con su gasto.');
+  }
   d.services.forEach((s     ) => completarService(d.planes, s));
-  for (const a of d.archivos) if (typeof a.nombre !== 'string' || !(a.blob instanceof Blob && ['image/jpeg','application/pdf'].includes(a.blob.type)) && !/^data:(image\/jpeg|application\/pdf);base64,[A-Za-z0-9+/]*={0,2}$/.test(a.datos)) throw Error('Un archivo del respaldo no se puede abrir.');
+  for (const a of d.archivos) if (typeof a.nombre !== 'string' || !(a.blob instanceof Blob && ['image/jpeg','application/pdf'].includes(a.blob.type)) && !/^data:(image\/jpeg|application\/pdf);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.datos)) throw Error('Un archivo del respaldo no se puede abrir.');
   const movs = movimientos(d);
   const meses = new Set(movs.map((m     ) => m.fecha.slice(0, 7)));
   for (const mes of meses) resumenFlota(espacio, mes, d.camiones.map((c     ) => c.id), movs);
@@ -94,6 +131,8 @@ export function validarDatos(d     , espacio        ) {
 export const exportar = (d     )         => JSON.stringify(validarDatos(d, d.espacio), null, 2);
 export function migrarDatos(d     ) {
   validarDatos(d,d.espacio);
-  return validarDatos({...d, config:{diasAcreditacion:3,...d.config}, cobros:d.cobros.map(migrarCheque)},d.espacio);
+  return validarDatos({...d, choferes:d.choferes ?? [], config:{diasAcreditacion:3,...d.config}, cobros:d.cobros.map(migrarCheque)},d.espacio);
 }
 export function importar(texto        , espacio        ) { let d; try { d = JSON.parse(texto); } catch { throw Error('No se pudo leer el respaldo. Elegí el archivo exportado por FleetIQ.'); } validarDatos(d,espacio); return migrarDatos(d); }
+
+export { validarChofer, validarCombustible, tarifaTonelada, sincronizarLecturaGasto, consumoCombustible, coincidenciaChofer, leerDecimal } from './dominio/operacion.js';

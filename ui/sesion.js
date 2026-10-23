@@ -68,7 +68,7 @@ export async function iniciarSesion(app) {
         detalle: String(error?.stack ?? error),
       });
     app.informar(
-      'No pudimos guardar el cambio. Lo anterior sigue guardado. Probá de nuevo o exportá un respaldo desde Ajustes.',
+      app.mensajeUsuario(error) + ' Lo anterior sigue guardado.',
     );
   }
   app.fallo = fallo;
@@ -154,6 +154,7 @@ export async function iniciarSesion(app) {
     app.fallo(event.reason);
   });
   await app.cargar(app.espacioInicial());
+  app.iniciarHistorial();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('./sw.js')

@@ -47,7 +47,10 @@ export function registrarFormularios(app) {
   function abrirDialogo(titulo) {
     app.borrador = false;
     app.detalle.replaceChildren(app.btn('Volver', app.volverCarga), app.e('h2', titulo));
-    if (!app.dialog.open) app.dialog.showModal();
+    if (!app.dialog.open) {
+      app.dialog.showModal();
+      globalThis.history?.pushState({ fleetiq: 'dialogo' }, '');
+    }
     return app.detalle;
   }
   function campo(nombre, etiqueta, tipo = 'text', opciones = null, requerido = true) {
@@ -82,13 +85,14 @@ export function registrarFormularios(app) {
     for (const [nombre, { c, input }] of Object.entries(entradas))
       if (
         c.tipo === 'select' &&
-        (['camionId', 'clienteId', 'tipo'].includes(nombre) || c.opciones.length <= 6)
+        (['camionId', 'clienteId', 'choferId', 'tipo'].includes(nombre) || c.opciones.length <= 6)
       )
         app.opcionesGrandes(
           resultado,
           nombre,
           [...input.options].filter((o) => o.value).map((o) => [o.value, o.textContent]),
         );
+    if (entradas.choferId) form.insertBefore(app.btn('+ Nuevo chofer', () => app.editarChofer(null, resultado)),submit);
     if (entradas.clienteId)
       form.insertBefore(
         app.btn('+ Nuevo cliente', () => app.clienteEnFormulario(resultado)),
@@ -97,9 +101,10 @@ export function registrarFormularios(app) {
     return resultado;
   }
   function opcionesGrandes(container, nombre, valores) {
+    const cantidad=valores.length;
     const { input } = container.entradas[nombre];
     if (input.hidden) return;
-    if (!['camionId', 'clienteId', 'tipo'].includes(nombre) && valores.length > 6) return;
+    if (!['camionId', 'clienteId', 'choferId', 'tipo'].includes(nombre) && cantidad > 6) return;
     const group = app.e('div', undefined, 'opciones');
     group.setAttribute('role', 'group');
     group.setAttribute('aria-label', input.parentElement.firstChild.textContent);
@@ -114,14 +119,15 @@ export function registrarFormularios(app) {
       b.setAttribute('aria-pressed', String(input.value === value));
       group.append(b);
     }
-    if (nombre === 'camionId' && valores.length > 6) {
+    if (['camionId','choferId'].includes(nombre) && cantidad > 6) {
       const busca = app.e('input');
       busca.type = 'search';
-      busca.setAttribute('aria-label', 'Buscar cami\u00f3n');
+      busca.setAttribute('aria-label', nombre === 'choferId' ? 'Buscar chofer' : 'Buscar cami\u00f3n');
       busca.oninput = () => {
         for (const b of group.children)
           b.hidden = !b.textContent.toLowerCase().includes(busca.value.toLowerCase());
       };
+      container.entradas[nombre].busca=busca;
       input.parentElement.append(busca);
     }
     input.parentElement.append(group);
@@ -177,6 +183,7 @@ export function registrarFormularios(app) {
   app.actualizarOpciones = (f, nombre) => {
     const input = f.entradas[nombre].input;
     input.parentElement.querySelector('.opciones')?.remove();
+    f.entradas[nombre].busca?.remove();
     input.hidden = false;
     opcionesGrandes(f, nombre, [...input.options].filter((o) => o.value).map((o) => [o.value, o.textContent]));
   };
@@ -191,7 +198,8 @@ export function registrarFormularios(app) {
     } else if (c.tipo === 'textarea') input = app.e('textarea');
     else {
       input = app.e('input');
-      input.type = c.tipo === 'monto' ? 'text' : c.tipo;
+      // Montos y números enteros van como texto: el campo numérico del celular lee "160.000" como 160.
+      input.type = ['monto', 'number'].includes(c.tipo) ? 'text' : c.tipo;
     }
     app.asociar(l, input);
     input.name = c.nombre;
@@ -206,9 +214,10 @@ export function registrarFormularios(app) {
       falta,
     };
     configurarAdjunto(app, input, l, falta);
+    if (c.decimales) { input.inputMode='decimal'; input.placeholder='Con coma, hasta '+c.decimales+' decimales'; }
     if (c.tipo === 'number') {
-      input.min = '0';
-      input.step = '1';
+      input.inputMode = 'numeric';
+      input.autocomplete = 'off';
     }
     if (c.tipo === 'monto') {
       input.inputMode = 'decimal';
@@ -236,7 +245,7 @@ export function registrarFormularios(app) {
     if (c.nombre === 'fecha' && inicial[c.nombre] === undefined) input.value = app.hoy();
     if (inicial[c.nombre] !== undefined && c.tipo !== 'file')
       input.value =
-        c.tipo === 'monto'
+        c.decimales ? (inicial[c.nombre] / 10 ** c.decimales).toLocaleString('es-AR',{useGrouping:false,minimumFractionDigits:c.decimales,maximumFractionDigits:c.decimales}) : c.tipo === 'monto'
           ? (inicial[c.nombre] / 100).toLocaleString('es-AR', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
@@ -262,7 +271,7 @@ export function registrarFormularios(app) {
   async function procesarFormulario(event, entradas, error, submit, texto, action) {
     event.preventDefault();
     event.stopPropagation?.();
-    if (app.ocupado) return;
+    if (app.ocupado || submit.disabled) return;
     error.hidden = true;
     submit.disabled = true;
     try {
@@ -298,8 +307,10 @@ export function registrarFormularios(app) {
       const entrada =
         candidatos.map((n) => entradas[n]).find(Boolean) ?? Object.values(entradas)[0];
       if (entrada) {
+        // El texto completo va junto al dato; abajo, junto a Guardar, solo se señala dónde mirar.
         entrada.falta.textContent = error.textContent;
         entrada.falta.hidden = false;
+        error.textContent = 'Revisá el dato marcado más arriba.';
         entrada.input.setAttribute('aria-invalid', 'true');
         entrada.falta.scrollIntoView({
           block: 'nearest',

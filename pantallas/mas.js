@@ -9,7 +9,7 @@ export function registrarMas(app) {
     else n.append(app.selectorEspacio);
     const links = app.seccion('Ver y administrar');
     links.classList.add('menu');
-    for (const p of ['Viajes', 'Papeles', 'Mantenimiento', 'Ajustes', 'Soporte', 'Ayuda'])
+    for (const p of ['Viajes', 'Choferes', 'Papeles', 'Mantenimiento', 'Ajustes', 'Soporte', 'Ayuda'])
       links.append(app.btn(p, () => app.cambiarPagina(p)));
     const ayuda = app.seccion('Instalar en el celular');
     ayuda.append(
@@ -180,7 +180,7 @@ export function registrarMas(app) {
       ],
       [
         '3. Ver el resultado de un camión',
-        'Entrá en Inicio y elegí el mes con las flechas. Buscá el camión: vas a ver sus ingresos, gastos y resultado según lo cargado. No es la ganancia contable.',
+        'Entrá en Inicio y elegí el mes con las flechas. Buscá el camión: vas a ver sus ingresos, gastos y resultado según lo cargado. No incluye todos los costos contables.',
       ],
     ])
       app.seccion(titulo).append(app.e('p', texto));

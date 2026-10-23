@@ -1,3 +1,4 @@
+import { leerDecimal } from '../dominio/operacion.js';
 import { leerMonto } from '../datos.js';
 
 export function mensajeFaltante(campo) {
@@ -25,11 +26,14 @@ export function pedidoCampo(campo) {
 // Los campos numéricos opcionales vacíos siguen siendo ausentes, no cero.
 export function valorFormulario(campo, texto) {
   const valor = texto.trim();
+  if (campo.decimales) return leerDecimal(valor,campo.decimales);
   if (campo.tipo === 'monto') return valor ? leerMonto(valor) : undefined;
   if (campo.tipo !== 'number') return valor;
   if (valor === '') return undefined;
-  const numero = Number(valor);
-  if (!Number.isSafeInteger(numero) || numero < 0)
-    throw Error('Escribí un número entero sin signo.');
+  // Se acepta el punto de miles ("160.000"); nunca se lee como decimal ni se descarta en silencio.
+  if (!/^(?:\d{1,3}(?:\.\d{3})+|\d+)$/.test(valor))
+    throw Error('Escribí solo números enteros, con o sin punto de miles. Por ejemplo: 160.000.');
+  const numero = Number(valor.replaceAll('.', ''));
+  if (!Number.isSafeInteger(numero)) throw Error('El número es demasiado grande.');
   return numero;
 }

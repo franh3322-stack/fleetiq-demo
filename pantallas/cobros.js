@@ -1,4 +1,4 @@
-import { detalleCobro } from '../ui/formato.js';
+import { detalleCobro, confirmacionAcreditacion, fechaEstadoCobro } from '../ui/formato.js';
 
 export function opcionesViajesCobro(viajes, clienteId) {
   return viajes
@@ -21,6 +21,8 @@ export function registrarCobros(app) {
     app.formulario(target,[app.fecha(),...campos],titulo,v=>app.cambiar(d=>{
       const i=d.cobros.findIndex(x=>x.id===c.id),antes=d.cobros[i];
       const nuevo=fn(antes,v,id);
+      if(nuevo && V.estadoCheque(nuevo)==='acreditado' && V.estadoCheque(antes)!=='acreditado') v.confirmacionCheque='Listo: '+detalleCobro(nuevo)+' cobrado · '+M.formatoFecha(v.fecha);
+      if(!nuevo)throw Error('La acreditación no se guardó. Revisá la fecha.');
       if(JSON.stringify(nuevo)!==JSON.stringify(antes)){app.historial(d,'cobros',antes,titulo==='Ya lo deposité'?'Cheque depositado':v.motivo || titulo);d.cobros[i]=nuevo;}
     }));
   }
@@ -32,8 +34,8 @@ export function registrarCobros(app) {
       const sin=s.saldoCentavos+(['sin-efecto','por-confirmar'].includes(c.estadoRetencion)?0:retencion),con=sin-retencion;
       paso(c,'Me lo rechazaron',(item,v,id)=>V.cambiarEstadoCheque(item,estado,v.fecha,{id,motivo:v.motivo,estadoRetencion:v.estadoRetencion}),[
         ...(c.retencionCentavos ? [app.campo('estadoRetencion','¿La retención de '+moneda(c.retencionCentavos)+' sigue valiendo?','select',opcionesRetencion)] : []),motivo(false),
-      ],app.cliente(c.clienteId)+' vuelve a deber '+moneda(Math.max(0,con))+(c.retencionCentavos?' si la retención sigue vigente; '+moneda(Math.max(0,sin))+' si no vale o queda por confirmar.':'.')+' El cheque todavía no había descontado deuda.');
-    } else paso(c,titulo,(item,v,id)=>V.cambiarEstadoCheque(item,estado,v.fecha,{id}));
+      ],app.cliente(c.clienteId)+' sigue debiendo '+moneda(Math.max(0,con))+(c.retencionCentavos?' si la retención sigue vigente; '+moneda(Math.max(0,sin))+' si no vale o queda por confirmar.':'.')+' El cheque todavía no había descontado deuda.');
+    } else paso(c,titulo,(item,v,id)=>{if(estado==='acreditado' && !confirmacionAcreditacion(item,v.fecha,confirm)) return null;return V.cambiarEstadoCheque(item,estado,v.fecha,{id});});
   }
   function botonesCheque(c) {
     if(c.anulado || !V.esCheque(c))return [];
@@ -221,13 +223,13 @@ export function registrarCobros(app) {
       for (const texto of [
         ...(s.chequesSinCobrarCentavos>0 ? ['Cheques sin cobrar '+moneda(s.chequesSinCobrarCentavos),'Falta que te entregue '+moneda(s.faltaEntregarCentavos)] : []),
         ...(app.datos.cobros.some(x=>x.clienteId===c.id && !x.anulado && x.estadoRetencion==='por-confirmar') ? ['Retención por confirmar'] : []),
-        ...(s.vencidoCentavos > 0 ? ['Vencido ' + moneda(s.vencidoCentavos)] : []),
+        ...(s.vencidoCentavos > 0 ? ['Vencido sin cubrir ' + moneda(s.vencidoSinCubrirCentavos)+(s.chequesSinCobrarCentavos>0?' · Descontando los cheques en curso':'')] : []),
         ...(s.aFavorCentavos > 0 ? ['A favor ' + moneda(s.aFavorCentavos)] : []),
         'Plazo: ' + (c.plazoDias ?? 30) + ' días',
         ...(s.retenidoCentavos > 0 ? ['Retenciones: ' + moneda(s.retenidoCentavos)] : []),
       ]) resumen.append(app.e('br'), app.e('span', texto));
     }
-    for(const [estado,titulo] of [['recibido','Cheques para depositar'],['depositado','Depositados · esperando la plata'],['rechazado','Rechazados']]) {
+    for(const [estado,titulo] of [['recibido','Cheques para depositar'],['depositado','Depositados · esperando la plata'],['rechazado','Rechazados'],['acreditado','Cheques cobrados']]) {
       const seccion=app.seccion(titulo);
       const lista=estado==='recibido' ? V.chequesEnCartera(app.datos.cobros) : app.datos.cobros.filter(c=>!c.anulado && V.estadoCheque(c)===estado);
       for(const c of lista)app.filaRegistro(seccion,app.cliente(c.clienteId)+' · '+detalleCobro(c),palabras(c)+' · '+(c.cobrableDesde?'Se puede cobrar desde '+M.formatoFecha(c.cobrableDesde):'Sin fecha de cobro')+(c.resuelto?' · Resuelto':'')+(app.datos.cobros.some(x=>!x.anulado && x.reemplazaCobroId===c.id)?' · Reemplazado':''),botonesCheque(c));
@@ -237,8 +239,8 @@ export function registrarCobros(app) {
       app.filaRegistro(
         h,
         app.cliente(c.clienteId) + ' · ' + detalleCobro(c),
-        M.formatoFecha(c.fecha) + ' · '+palabras(c)+(c.estadoRetencion?' · Retención '+c.estadoRetencion:'') + (c.anulado ? ' · Cobro anulado · ' + c.anulado.motivo : ''),
-        [...(c.eventos?.length>1 && !c.anulado ? [app.btn('Anular',()=>app.anular('cobros',c),'peligro'),...app.verArchivo(c)] : app.acciones('cobros', c, app.editarCobro)),...botonesCheque(c)],
+        fechaEstadoCobro(c,palabras(c))+(c.estadoRetencion?' · Retención '+c.estadoRetencion:'') + (c.anulado ? ' · Cobro anulado · ' + c.anulado.motivo : ''),
+        [...(c.eventos?.length>1 && !c.anulado ? [app.btn('Anular',()=>app.anular('cobros',c),'peligro'),...app.verArchivo(c)] : app.acciones('cobros', c, app.editarCobro)),...(V.esCheque(c) ? [] : botonesCheque(c))],
       );
   }
   app.editarCliente = editarCliente;

@@ -1,6 +1,7 @@
 import * as V from '../dominio/viajes-cobros.js';
 
-import { moneda } from '../datos.js';
+import { moneda, tarifaTonelada, sincronizarLecturaGasto, coincidenciaChofer, validarChofer } from '../datos.js';
+import { valorFormulario } from '../ui/validacion.js';
 
 // Comparte el estado de la sesión; las acciones se resuelven al usarlas.
 export function registrarCargas(app) {
@@ -41,6 +42,8 @@ export function registrarCargas(app) {
         app.camion(true),
         app.campo('categoria', '¿Qué gasto es?', 'select', cats),
         app.monto(),
+        {...app.campo('litrosCentesimas','Litros (opcional)','text',null,false),decimales:2},
+        app.campo('km','Km del odómetro (opcional)','number',null,false),
         app.fecha(),
         app.campo(
           'viajeId',
@@ -64,6 +67,8 @@ export function registrarCargas(app) {
             camionId: v.camionId === 'general' ? null : v.camionId,
             tipo: 'gasto',
             categoria: v.categoria,
+            litrosCentesimas: v.categoria==='combustible' ? v.litrosCentesimas : undefined,
+            km: v.categoria==='combustible' ? v.km : undefined,
             fecha: v.fecha,
             importeCentavos: v.importeCentavos,
             viajeId: v.viajeId || undefined,
@@ -71,6 +76,7 @@ export function registrarCargas(app) {
           };
           if (v.viajeId && d.viajes.find((x) => x.id === v.viajeId).camionId !== g.camionId)
             throw Error('El viaje es de otro camión. Revisá la elección.');
+          sincronizarLecturaGasto(d,g);
           await app.ponerArchivo(d, v.archivo, g);
           if (r) {
             app.historial(d, 'gastos', r, v.motivo);
@@ -95,6 +101,8 @@ export function registrarCargas(app) {
         .map((o) => [o.value, o.text]),
     );
     app.opcionesGrandes(f, 'categoria', cats);
+    const combustible=()=>{for(const n of ['litrosCentesimas','km']) f.entradas[n].input.parentElement.hidden=f.entradas.categoria.input.value!=='combustible';};
+    f.entradas.categoria.input.onchange=combustible; combustible();
   }
   function gastos() {
     app.root.append(app.btn('Registrar gasto', () => app.gasto(), 'principal'));
@@ -131,19 +139,24 @@ export function registrarCargas(app) {
       ),
       app.campo('origen', 'Origen'),
       app.campo('destino', 'Destino'),
-      app.campo('chofer', 'Chofer (opcional)', 'text', null, false),
+      app.choferCampo(r?.choferId),
+      ...(r?.chofer ? [app.campo('chofer','Chofer anterior (texto)','text',null,false)] : []),
+      app.campo('modalidadTarifa','Cómo se cobra','select',[['cerrado','Precio cerrado'],['tonelada','Por tonelada']]),
+      {...app.campo('precioToneladaMilesimas','$ por tonelada'),decimales:3},
+      {...app.campo('toneladasMilesimas','Toneladas'),decimales:3},
       app.monto('tarifaCentavos', 'Tarifa acordada'),
       app.campo('kmRecorridos', 'Kilómetros del viaje (opcional)', 'number', null, false),
       app.campo('numeroPapel', 'Número de carta de porte (opcional)', 'text', null, false),
       app.archivo(),
       ...(r ? [app.campo('motivo', 'Motivo de la corrección', 'textarea')] : []),
     ];
-    app.formulario(
+    const f = app.formulario(
       app.abrirDialogo(r ? 'Corregir viaje' : 'Nuevo viaje'),
       campos,
       'Guardar viaje',
       (v) =>
         app.cambiar(async (d) => {
+          if(v.modalidadTarifa==='tonelada') v.tarifaCentavos=tarifaTonelada(v.precioToneladaMilesimas,v.toneladasMilesimas);
           let viaje = {
             ...r,
             id: r?.id ?? app.id(),
@@ -154,7 +167,11 @@ export function registrarCargas(app) {
             fechaBaseCobro: v.fechaBaseCobro || undefined,
             origen: v.origen,
             destino: v.destino,
-            chofer: v.chofer,
+            chofer: v.choferId ? undefined : v.chofer,
+            choferId: v.choferId || undefined,
+            modalidadTarifa: v.modalidadTarifa,
+            precioToneladaMilesimas: v.modalidadTarifa==='tonelada' ? v.precioToneladaMilesimas : undefined,
+            toneladasMilesimas: v.modalidadTarifa==='tonelada' ? v.toneladasMilesimas : undefined,
             tarifaCentavos: v.tarifaCentavos,
             kmRecorridos: v.kmRecorridos,
             numeroPapel: v.numeroPapel,
@@ -163,7 +180,7 @@ export function registrarCargas(app) {
           };
           if (r) {
             app.historial(d, 'viajes', r, v.motivo);
-            if (r.tarifaCentavos !== v.tarifaCentavos)
+            if (r.tarifaCentavos !== v.tarifaCentavos || r.precioToneladaMilesimas !== viaje.precioToneladaMilesimas || r.toneladasMilesimas !== viaje.toneladasMilesimas || (r.modalidadTarifa ?? 'cerrado') !== viaje.modalidadTarifa)
               viaje = {
                 ...viaje,
                 ...V.cambiarTarifa(
@@ -185,8 +202,24 @@ export function registrarCargas(app) {
             );
           else d.viajes.push(viaje);
         }),
-      r ?? {},
+      {modalidadTarifa:'cerrado',...r},
     );
+    const modalidad=()=>{const por=f.entradas.modalidadTarifa.input.value==='tonelada'; f.entradas.tarifaCentavos.input.parentElement.hidden=por; f.entradas.tarifaCentavos.c.requerido=!por; for(const n of ['precioToneladaMilesimas','toneladasMilesimas']){f.entradas[n].input.parentElement.hidden=!por; f.entradas[n].c.requerido=por;}};
+    // Antes de guardar se ve la cuenta que va a quedar: $/t × toneladas = tarifa.
+    const ecoTonelada=app.e('p','','eco');ecoTonelada.setAttribute('aria-live','polite');
+    f.entradas.toneladasMilesimas.input.parentElement.append(ecoTonelada);
+    const verTonelada=()=>{
+      const [pr,t]=['precioToneladaMilesimas','toneladasMilesimas'].map(n=>f.entradas[n]);
+      if(f.entradas.modalidadTarifa.input.value!=='tonelada' || !pr.input.value || !t.input.value){ecoTonelada.textContent='';return;}
+      try{
+        const v={modalidadTarifa:'tonelada',precioToneladaMilesimas:valorFormulario(pr.c,pr.input.value),toneladasMilesimas:valorFormulario(t.c,t.input.value)};
+        ecoTonelada.textContent=app.textoTarifa({...v,tarifaCentavos:tarifaTonelada(v.precioToneladaMilesimas,v.toneladasMilesimas)});
+      }catch{ecoTonelada.textContent='Revisá el precio por tonelada o las toneladas.';}
+    };
+    for(const n of ['precioToneladaMilesimas','toneladasMilesimas'])f.entradas[n].input.oninput=verTonelada;
+    f.entradas.modalidadTarifa.input.onchange=()=>{modalidad();verTonelada();};modalidad();verTonelada();
+    const coincide=r?.chofer && coincidenciaChofer(r.chofer,app.datos.choferes ?? []);
+    if(coincide && !r.choferId) f.form.append(app.btn('Elegir a '+coincide.nombre+' de la lista',()=>{f.entradas.choferId.input.value=coincide.id;app.actualizarOpciones(f,'choferId');app.borrador=true;}));
   }
   function viajes() {
     app.root.append(
@@ -244,7 +277,7 @@ export function registrarCargas(app) {
                 ),
                 app.e(
                   'p',
-                  'Solo incluye los gastos asignados a este viaje. No es la ganancia contable.',
+                  'Solo incluye los gastos asignados a este viaje. No incluye todos los costos contables.',
                 ),
               );
           }),
@@ -256,7 +289,8 @@ export function registrarCargas(app) {
           ' · ' +
           v.fecha +
           ' · ' +
-          moneda(v.tarifaCentavos) +
+          app.textoTarifa(v) +
+          (v.choferId || v.chofer ? ' · '+app.nombreChofer(v) : '') +
           ' · ' +
           {
             hecho: 'Viaje hecho',
@@ -267,6 +301,33 @@ export function registrarCargas(app) {
       );
     }
   }
+  app.choferCampo = (actual) => app.campo('choferId','Chofer (opcional)','select',(app.datos.choferes ?? []).filter(c=>c.activo!==false || c.id===actual).map(c=>[c.id,c.nombre+(c.activo===false?' · Inactivo':'')]),false);
+  app.nombreChofer = v => (app.datos.choferes ?? []).find(c=>c.id===v.choferId)?.nombre ?? v.chofer ?? '';
+  app.textoTarifa = v => v.modalidadTarifa==='tonelada' ? new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0,maximumFractionDigits:3}).format(v.precioToneladaMilesimas/1000).replace(/\s/g,' ')+'/t × '+(v.toneladasMilesimas/1000).toLocaleString('es-AR',{minimumFractionDigits:3,maximumFractionDigits:3})+' t = '+moneda(v.tarifaCentavos,v.tarifaCentavos%100!==0) : moneda(v.tarifaCentavos);
+  app.editarChofer = (r=null, padre=null) => {
+    const target=padre ? app.e('section',undefined,'tarjeta') : app.abrirDialogo(r?'Corregir chofer':'Nuevo chofer');
+    if(padre) padre.form.parentElement.append(target);
+    app.formulario(target,[app.campo('nombre','Nombre'),app.campo('telefono','Teléfono (opcional)','text',null,false),...(r?[app.campo('motivo','Motivo','textarea')]:[])],'Guardar chofer',async v=>{
+      const nuevo={id:r?.id ?? app.id(),empresaId:app.espacio,nombre:v.nombre,telefono:v.telefono,activo:r?.activo ?? true};
+      const ok=await app.cambiar(d=>{d.choferes ??=[];validarChofer(nuevo,d.choferes);if(r){app.historial(d,'choferes',r,v.motivo);Object.assign(d.choferes.find(c=>c.id===r.id),nuevo);}else d.choferes.push(nuevo);});
+      if(!ok)return false;
+      if(padre){const i=padre.entradas.choferId.input;i.append(new Option(nuevo.nombre,nuevo.id));i.value=nuevo.id;app.actualizarOpciones(padre,'choferId');app.borrador=true;target.remove();return false;}
+    },r ?? {});
+  };
+  app.choferes = () => {
+    app.root.append(app.btn('Nuevo chofer',()=>app.editarChofer(), 'principal'));
+    for(const c of app.datos.choferes ?? []) {
+      const n=app.filaRegistro(app.root,c.nombre,(c.activo===false?'Inactivo':'Activo')+(c.telefono?' · '+c.telefono:''),[app.btn('Corregir',()=>app.editarChofer(c)),app.btn(c.activo===false?'Activar':'Dejar inactivo',()=>app.formulario(app.abrirDialogo('Cambiar disponibilidad'),[app.campo('motivo','Motivo','textarea')],'Guardar cambio',v=>app.cambiar(d=>{const x=d.choferes.find(x=>x.id===c.id);app.historial(d,'choferes',x,v.motivo);x.activo=x.activo===false;})))]);
+      const licencias=app.datos.papeles.filter(p=>p.choferId===c.id && p.tipo==='Licencia' && !p.anulado && !app.datos.papeles.some(x=>x.id===p.reemplazadoPor && !x.anulado));
+      n.append(app.e('h3','Licencia'));
+      if(!licencias.length)n.append(app.e('p','Todavía no hay una licencia cargada.'));
+      for(const p of licencias)n.append(app.e('p',p.vence ? 'Vence '+p.vence.split('-').reverse().join('/') : 'Sin vencimiento'),...app.accionesPapel(p));
+      n.append(app.e('h3','Viajes'));
+      const viajes=app.datos.viajes.filter(v=>v.choferId===c.id);
+      if(!viajes.length)n.append(app.e('p','Todavía no tiene viajes elegidos de la lista.'));
+      for(const v of viajes)n.append(app.e('p',v.fecha.split('-').reverse().join('/')+' · '+v.origen+' · '+v.destino+' · '+app.textoTarifa(v)));
+    }
+  };
   app.cargarMenu = cargarMenu;
   app.gasto = gasto;
   app.gastos = gastos;

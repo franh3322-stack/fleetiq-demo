@@ -1,5 +1,5 @@
 import { validarDatos, migrarDatos } from './datos.js';
-export const entidades = ['camiones','viajes','clientes','cobros','gastos','papeles','planes','services','reparaciones','lecturas','historial','archivos'];
+export const entidades = ['choferes','camiones','viajes','clientes','cobros','gastos','papeles','planes','services','reparaciones','lecturas','historial','archivos'];
 const cache = new WeakMap();
 const pedir = r => new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.errorBloqueado || r.error);});
 const terminar = tx => new Promise((ok,no)=>{tx.oncomplete=()=>ok();tx.onerror=()=>no(tx.error);tx.onabort=()=>no(tx.error || Error('Se canceló el guardado.'));});
@@ -27,7 +27,7 @@ export function cambios(antes,despues){
   return resultado;
 }
 export async function abrir(espacio){
-  const r=indexedDB.open('fleetiq-etapa1-'+espacio,2);
+  const r=indexedDB.open('fleetiq-etapa1-'+espacio,3);
   r.onupgradeneeded=()=>{for(const n of [...entidades,'meta','ops'])if(!r.result.objectStoreNames.contains(n))r.result.createObjectStore(n);};
   r.onblocked=()=>{r.errorBloqueado=Error('Cerrá las otras pestañas de FleetIQ y volvé a abrir para actualizar el guardado.');r.onerror?.();};
   const db=await pedir(r);db.onversionchange=()=>db.close();
@@ -41,9 +41,14 @@ export async function abrir(espacio){
 }
 async function escribir(db,d,antes,migracion=false){
  const delta=cambios(antes,d);if(!delta.length)return;
- const stores=[...new Set([...delta.map(c=>c.entidad),'ops',...(migracion?['estado']:[])])];
+ const stores=[...new Set([...(antes?delta.map(c=>c.entidad):[...entidades,'meta']),'ops',...(migracion?['estado']:[])])];
  const tx=db.transaction(stores,'readwrite');const fin=terminar(tx);
- for(const c of delta){
+ // Las claves se leen y eliminan en la misma transacción que escribe el reemplazo.
+ if(!antes) for(const entidad of entidades){
+   const request=tx.objectStore(entidad).getAllKeys();
+   request.onsuccess=()=>{const ids=new Set(d[entidad].map(r=>r.id));for(const key of request.result)if(!ids.has(key))aplicar({entidad,accion:'delete',registro:{id:key}});};
+ }
+ function aplicar(c){
    const key=c.entidad==='meta'?'datos':c.registro.id;
    // Orden separado del registro de negocio: getAll() ordena por clave en IndexedDB.
    const fila=c.entidad==='meta'?c.registro:{registro:c.registro,orden:d[c.entidad].findIndex(r=>r.id===key)};
@@ -52,6 +57,7 @@ async function escribir(db,d,antes,migracion=false){
    // Los bytes se obtienen del almacén archivos; nunca se duplican en la cola.
    tx.objectStore('ops').put({id:opId,opId,empresaId:d.empresaId,entidad:c.entidad,registroId:key,accion:c.accion,fecha:new Date().toISOString(),estado:'pendiente',registro:c.entidad==='archivos'?{id:key,nombre:c.registro.nombre}:c.registro},opId);
  }
+ for(const c of delta)aplicar(c);
  if(migracion)tx.objectStore('estado').delete('datos');await fin;cache.set(db,{...structuredClone({...d,archivos:[]}),archivos:d.archivos.map(a=>({...a}))});
 }
 export async function leer(db){const tx=db.transaction([...entidades,'meta']);const requests=[pedir(tx.objectStore('meta').get('datos')),...entidades.map(n=>pedir(tx.objectStore(n).getAll()))];const [meta,...listas]=await Promise.all(requests);if(!meta)return undefined;const d={...meta};entidades.forEach((n,i)=>d[n]=listas[i].sort((a,b)=>a.orden-b.orden).map(r=>r.registro));cache.set(db,d);return migrarDatos(d);}

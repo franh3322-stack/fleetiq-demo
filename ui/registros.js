@@ -1,3 +1,4 @@
+import { sincronizarLecturaGasto } from '../datos.js';
 import * as V from '../dominio/viajes-cobros.js';
 
 import { adjunto } from '../almacen.js';
@@ -85,6 +86,7 @@ export function registrarRegistros(app) {
             fecha: app.hoy(),
             motivo: v.motivo,
           };
+          if (lista==='gastos') sincronizarLecturaGasto(d,item);
           if (extra) extra(d, item);
         }
       }),

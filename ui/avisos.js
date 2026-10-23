@@ -2,7 +2,7 @@ import * as C from '../dominio/camiones.js';
 import * as M from '../dominio/vencimientos.js';
 import * as V from '../dominio/viajes-cobros.js';
 import { nombreMedio } from './formato.js';
-import { moneda } from '../datos.js';
+import { moneda, papelVigente } from '../datos.js';
 
 // El dominio recibe solo cargas vigentes y kilómetros aceptados de esta sesión.
 export function avisosParaMostrar(datos, hoy) {
@@ -10,7 +10,8 @@ export function avisosParaMostrar(datos, hoy) {
   // La fecha base es común a todas las cuentas: preparar una vez por pantalla.
   const viajes = datos.viajes.map((v) => v.fechaBaseCobro ? { ...v, fecha: v.fechaBaseCobro } : v);
   const avisos = M.avisos({
-    papeles: datos.papeles.filter((p) => !p.anulado),
+    // Un papel renovado ya no avisa: avisa su renovación.
+    papeles: datos.papeles.filter((p) => papelVigente(p, datos.papeles)),
     planes: datos.planes
       .filter((p) => !p.anulado)
       .map((p) => ({

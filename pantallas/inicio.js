@@ -27,7 +27,7 @@ export function registrarInicio(app) {
       app.e('summary', 'Según lo cargado · Qué incluye'),
       app.e(
         'p',
-        'Resultado según los ingresos y gastos cargados, en pesos de cada mes, sin ajuste por inflación. No es la ganancia contable. Revisá si faltan ingresos o gastos. IVA incluido, sin separarlo.',
+        'Resultado según los ingresos y gastos cargados, en pesos de cada mes, sin ajuste por inflación. No incluye todos los costos contables. Revisá si faltan ingresos o gastos. IVA incluido, sin separarlo.',
       ),
     );
     const output = app.e('div');

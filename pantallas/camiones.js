@@ -2,7 +2,7 @@ import * as C from '../dominio/camiones.js';
 
 import * as M from '../dominio/vencimientos.js';
 import { resumenFlota } from '../dominio/saldo-mensual.js';
-import { moneda, movimientos } from '../datos.js';
+import { moneda, movimientos, papelVigente, consumoCombustible } from '../datos.js';
 
 // Comparte el estado de la sesión; las acciones se resuelven al usarlas.
 export function registrarCamiones(app) {
@@ -68,6 +68,10 @@ export function registrarCamiones(app) {
           );
         }),
       );
+      const consumo=consumoCombustible(app.datos,c.id,app.mesResultado);
+      const panelConsumo=app.seccion('Consumo');
+      const litros=n=>n.toLocaleString('es-AR',{minimumFractionDigits:1,maximumFractionDigits:1})+' L/100 km';
+      panelConsumo.append(app.e('p',consumo.ultimo===null?'Faltan dos cargas con litros y km válidos para calcular el consumo.':'Último: '+litros(consumo.ultimo)),app.e('p',consumo.promedioMes===null?'Todavía no hay datos suficientes para el promedio del mes.':'Promedio de '+new Intl.DateTimeFormat('es-AR',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(app.mesResultado+'-01T12:00:00Z'))+': '+litros(consumo.promedioMes)),app.e('p','Estimación entre cargas. El promedio usa litros totales sobre km totales; compará cargas similares.','ayuda'));
       papelesDelCamion(c, k);
       mantenimientoDelCamion(c, k);
       resultadoDelCamion(c, k);
@@ -157,7 +161,7 @@ export function registrarCamiones(app) {
   app.editarKm = editarKm;
   function papelesDelCamion(c, k) {
     const pap = app.seccion('Papeles del camión');
-    for (const p of app.datos.papeles.filter((p) => app.activo(p) && p.camionId === c.id)) {
+    for (const p of app.datos.papeles.filter((p) => papelVigente(p, app.datos.papeles) && p.camionId === c.id)) {
       const estado = M.estadoPapel(p, app.hoy(), app.datos.config);
       app.filaRegistro(
         pap,
@@ -169,7 +173,7 @@ export function registrarCamiones(app) {
           'al-dia': 'Al día',
           'sin-vencimiento': 'Sin vencimiento',
         }[estado] + (p.vence ? ' · ' + M.formatoFecha(p.vence) : ''),
-        app.acciones('papeles', p, app.editarPapel),
+        app.accionesPapel(p),
       );
     }
     pap.append(app.btn('Agregar papel', () => app.editarPapel()));
@@ -229,7 +233,7 @@ export function registrarCamiones(app) {
           ' · Gastos ' +
           moneda(resultado.gastosCentavos),
       ),
-      app.e('p', 'Según lo cargado. No es la ganancia contable.'),
+      app.e('p', 'Según lo cargado. No incluye todos los costos contables.'),
     );
   }
 
