@@ -3,7 +3,7 @@ import * as M from '../dominio/vencimientos.js';
 
 export function espacioInicial() {
   try {
-    return 'demo';
+    return globalThis.localStorage?.getItem('fleetiq-espacio') === 'real' ? 'real' : 'demo';
   } catch {
     return 'demo';
   }

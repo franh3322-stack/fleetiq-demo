@@ -4,7 +4,9 @@ import { paraRespaldo } from '../almacen.js';
 export function registrarMas(app) {
   function mas() {
     const n = app.seccion('Espacio de trabajo');
-    n.append(app.selectorEspacio);
+    if (app.soloDemostracion)
+      n.append(app.e('p', 'Esta es la demostración pública: solo tiene datos ficticios para practicar.', 'ayuda'));
+    else n.append(app.selectorEspacio);
     const links = app.seccion('Ver y administrar');
     links.classList.add('menu');
     for (const p of ['Viajes', 'Papeles', 'Mantenimiento', 'Ajustes', 'Soporte', 'Ayuda'])

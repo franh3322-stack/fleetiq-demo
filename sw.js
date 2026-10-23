@@ -1,11 +1,11 @@
 // Cambiar la versión al modificar los archivos de la app. No guarda datos ni API.
-const CACHE = 'fleetiq-app-demo-036eb64380';
+const CACHE = 'fleetiq-app-demo-2dc4040fe4';
 const ARCHIVOS = [
   './', './index.html', './estilo.css', './app.js', './datos.js', './almacen.js',
   './dominio/camiones.js', './dominio/viajes-cobros.js', './dominio/vencimientos.js',
   './dominio/saldo-mensual.js', './manifest.webmanifest', './icono-192.png', './icono-512.png',
   './ui/sesion.js', './ui/elementos.js', './ui/formularios.js', './ui/registros.js',
-  './ui/navegacion.js', './ui/formato.js', './ui/validacion.js', './ui/avisos.js', './ui/adjuntos.js',
+  './ui/navegacion.js', './ui/formato.js', './ui/validacion.js', './ui/avisos.js', './ui/adjuntos.js', './ui/modo.js',
   './pantallas/inicio.js', './pantallas/camiones.js', './pantallas/cargas.js',
   './pantallas/cobros.js', './pantallas/mantenimiento.js', './pantallas/papeles.js', './pantallas/mas.js',
 ];

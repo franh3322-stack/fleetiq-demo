@@ -4,10 +4,12 @@ import { vacio, demostracion, cuentaCliente, validarDatos } from '../datos.js';
 import { abrir, leer, guardar } from '../almacen.js';
 
 import { espacioInicial, mensajeUsuario, claseResultado } from './formato.js';
+import { SOLO_DEMOSTRACION } from './modo.js';
 
 // Cada pantalla usa este mismo objeto; guardar reemplaza datos solo tras confirmar la transacción.
 export async function iniciarSesion(app) {
-  app.espacioInicial = espacioInicial;
+  app.soloDemostracion = SOLO_DEMOSTRACION;
+  app.espacioInicial = () => (SOLO_DEMOSTRACION ? 'demo' : espacioInicial());
   app.$ = (s) => document.querySelector(s);
   app.hoy = () => {
     const d = new Date();
@@ -108,6 +110,11 @@ export async function iniciarSesion(app) {
 
   async function cargar(nuevoEspacio) {
     if (app.ocupado) return;
+    // La copia pública nunca abre "Mi empresa", aunque se fuerce el selector.
+    if (SOLO_DEMOSTRACION && nuevoEspacio !== 'demo') {
+      app.espacioInput.value = app.espacio;
+      return;
+    }
     app.ocupado = true;
     app.espacioInput.disabled = true;
     try {
