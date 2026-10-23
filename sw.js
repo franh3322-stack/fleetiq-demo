@@ -1,5 +1,5 @@
 // Cambiar la versión al modificar los archivos de la app. No guarda datos ni API.
-const CACHE = 'fleetiq-app-demo-4ec5e9fda8';
+const CACHE = 'fleetiq-app-demo-036eb64380';
 const ARCHIVOS = [
   './', './index.html', './estilo.css', './app.js', './datos.js', './almacen.js',
   './dominio/camiones.js', './dominio/viajes-cobros.js', './dominio/vencimientos.js',

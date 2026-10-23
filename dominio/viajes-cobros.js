@@ -14,11 +14,13 @@
  
                         
                                                                                            
-                                                                            
+                                                                                      
+                                                              
+                                                                       
                                               
  
                                
-                                                                            
+                                                                                                      
                                                                                
  
 
@@ -46,9 +48,19 @@ function validarViaje(v       )       {
   if (v.kmRecorridos !== undefined) monto(v.kmRecorridos, `Viaje ${v.id}, km`);
   for (const h of v.historialTarifa) { motivoValido(h.fecha, h.motivo); monto(h.tarifaCentavos, `Viaje ${v.id}, historial`); }
 }
-function validarCobro(c       )       {
+export function validarCobro(c       )       {
   fechaValida(c.fecha); monto(c.importeCentavos, `Cobro ${c.id}`);
-  if (!['transferencia', 'cheque', 'efectivo', 'otro'].includes(c.medio)) throw new Error(`Cobro ${c.id}: medio inválido.`);
+  if (!['transferencia', 'cheque', 'echeq', 'efectivo', 'otro'].includes(c.medio)) throw new Error(`Cobro ${c.id}: medio inválido.`);
+  if (c.retencionCentavos !== undefined) monto(c.retencionCentavos, 'Retención del cobro ' + c.id);
+  if ((c.retencionCentavos ?? 0) > 0) {
+    if (!['iibb', 'otra'].includes(c.retencionTipo )) throw Error('Elegí el tipo de retención: Ingresos Brutos u Otra.');
+  } else if (c.retencionTipo !== undefined) throw Error('No corresponde tipo sin retención.');
+  suma(c.importeCentavos, c.retencionCentavos ?? 0);
+  for (const campo of ['cobrableDesde', 'depositadoFecha']         ) if (c[campo] !== undefined) {
+    if (!['cheque', 'echeq'].includes(c.medio)) throw Error('La fecha del cheque solo corresponde a Cheque o E-cheq.');
+    fechaValida(c[campo] );
+    if (c[campo]  < c.fecha) throw Error('La fecha del cheque no puede ser anterior a la fecha del cobro.');
+  }
   if (c.anulado) motivoValido(c.anulado.fecha, c.anulado.motivo);
 }
 function sinRepetidos(registros                                              , nombre        )       {
@@ -85,17 +97,18 @@ export function estadoCuentaCliente(cliente         , viajes                  , 
   const propios = viajes.filter(v => v.empresaId === cliente.empresaId && v.clienteId === cliente.id);
   const pagos = cobros.filter(c => c.empresaId === cliente.empresaId && c.clienteId === cliente.id);
   propios.forEach(validarViaje); pagos.forEach(validarCobro);
-  // SUPUESTO S-01: facturado por fecha del viaje hecho; no por fecha de cobro.
+  // S-01 confirmado por el cliente (22/10/2026): fecha del viaje hecho.
   const hechos = propios.filter(v => v.estado === 'hecho').sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id.localeCompare(b.id));
   const facturadoCentavos = hechos.reduce((s, v) => suma(s, v.tarifaCentavos), 0);
   const cobradoCentavos = pagos.filter(c => !c.anulado).reduce((s, c) => suma(s, c.importeCentavos), 0);
-  const saldoCentavos = suma(suma(inicial, facturadoCentavos), -cobradoCentavos);
+  const retenidoCentavos = pagos.filter(c => !c.anulado).reduce((s,c) => suma(s,c.retencionCentavos ?? 0),0);
+  const saldoCentavos = suma(suma(inicial, facturadoCentavos), -suma(cobradoCentavos, retenidoCentavos));
   // Sin fecha del saldo inicial no se presume vencido. Se cancela primero esa deuda previa.
   // SUPUESTO S-13: primero el viaje indicado; excedentes a la deuda más vieja.
   const pendientes = new Map(hechos.map(v => [v.id, v.tarifaCentavos]));
   let resto = 0;
   for (const c of pagos.filter(c => !c.anulado)) {
-    let importe = c.importeCentavos;
+    let importe = totalCobro(c);
     if (c.viajeId) {
       const v = propios.find(v => v.id === c.viajeId);
       if (!v) throw new Error(`Cobro ${c.id}: el viaje indicado no existe o es de otro cliente o empresa.`);
@@ -120,7 +133,7 @@ export function estadoCuentaCliente(cliente         , viajes                  , 
       else if (!proximoVencimiento || vence < proximoVencimiento) proximoVencimiento = vence;
     }
   }
-  return { facturadoCentavos, cobradoCentavos, saldoCentavos, vencidoCentavos, aFavorCentavos: Math.max(0, -saldoCentavos), ...(proximoVencimiento ? { proximoVencimiento } : {}) };
+  return { facturadoCentavos, cobradoCentavos, retenidoCentavos, saldoCentavos, vencidoCentavos, aFavorCentavos: Math.max(0, -saldoCentavos), ...(proximoVencimiento ? { proximoVencimiento } : {}) };
 }
 
 export function revisarCobro(cobro       , estadoCuenta              )                                                             {
@@ -128,8 +141,8 @@ export function revisarCobro(cobro       , estadoCuenta              )          
   if (!Number.isSafeInteger(estadoCuenta.saldoCentavos)) throw new Error('Saldo de cuenta inválido.');
   if (cobro.anulado) throw new Error(`Cobro ${cobro.id}: está anulado.`);
   const deuda = Math.max(0, estadoCuenta.saldoCentavos);
-  return cobro.importeCentavos > deuda
-    ? { requiereConfirmacion: true, aFavorCentavos: suma(cobro.importeCentavos - deuda, Math.max(0, -estadoCuenta.saldoCentavos)) }
+  return totalCobro(cobro) > deuda
+    ? { requiereConfirmacion: true, aFavorCentavos: suma(totalCobro(cobro) - deuda, Math.max(0, -estadoCuenta.saldoCentavos)) }
     : { requiereConfirmacion: false };
 }
 export function anularCobro(cobro       , fecha        , motivo        )        {
@@ -143,4 +156,15 @@ export function viajesAMovimientos(viajes                  )               {
   // SUPUESTO S-01: el ingreso usa la fecha del viaje, configurable al elegir este adaptador.
   return viajes.filter(v => v.estado === 'hecho').map(v => ({ id: `ingreso-viaje-${v.id}`, empresaId: v.empresaId,
     camionId: v.camionId, fecha: v.fecha, tipo: 'ingreso', importeCentavos: v.tarifaCentavos }));
+}
+
+export function totalCobro(c       )         { validarCobro(c); return suma(c.importeCentavos,c.retencionCentavos ?? 0); }
+export function depositarCheque(c       , fecha        )        {
+ validarCobro(c); fechaValida(fecha);
+ if (!['cheque','echeq'].includes(c.medio) || c.anulado || c.depositadoFecha) throw Error('Elegí un cheque o E-cheq pendiente de depósito.');
+ const resultado = {...c,depositadoFecha:fecha}; validarCobro(resultado); return resultado;
+}
+export function chequesEnCartera(cobros                  )          {
+ cobros.forEach(validarCobro);
+ return cobros.filter(c=>['cheque','echeq'].includes(c.medio) && !c.anulado && !c.depositadoFecha).sort((a,b)=>(a.cobrableDesde ?? '9999-99-99').localeCompare(b.cobrableDesde ?? '9999-99-99') || a.id.localeCompare(b.id));
 }

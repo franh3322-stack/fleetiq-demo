@@ -321,6 +321,7 @@ export function registrarFormularios(app) {
     if (Object.values(entradas).some((x) => x.input.preparando))
       throw Error('Esperá a que termine de prepararse el archivo.');
     for (const { input, c, falta } of Object.values(entradas)) {
+      if (input.parentElement.hidden) continue;
       const vacio = c.tipo === 'file' ? !input.files?.length : !input.value.trim();
       falta.hidden = true;
       input.setAttribute('aria-invalid', 'false');
@@ -340,6 +341,7 @@ export function registrarFormularios(app) {
       return null;
     }
     for (const [name, { input, c }] of Object.entries(entradas)) {
+      if (input.parentElement.hidden) { values[name] = undefined; continue; }
       const val = input.value.trim();
       try {
         values[name] =

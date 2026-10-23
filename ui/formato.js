@@ -39,6 +39,12 @@ export function textoProximo(p) {
 export const claseResultado = (valor) => (valor < 0 ? 'negativo' : valor > 0 ? 'positivo' : '');
 
 export function textoConfirmacion(texto, values, nombreCamion) {
+  if (texto === 'Guardar cobro' && values.medio) {
+    const retiene = values.tieneRetencion === 'si';
+    return 'Cobro guardado: ' + detalleCobro({ ...values, retencionCentavos: retiene ? values.retencionCentavos : undefined }) +
+      (values.fecha ? ' · ' + M.formatoFecha(values.fecha) : '') +
+      (['cheque', 'echeq'].includes(values.medio) && values.cobrableDesde ? ' · Se puede cobrar desde ' + M.formatoFecha(values.cobrableDesde) : '');
+  }
   return (
     (/service/i.test(texto)
       ? 'Service guardado'
@@ -62,4 +68,6 @@ export function textoConfirmacion(texto, values, nombreCamion) {
   );
 }
 
-export const nombreMedio = (medio) => ({ transferencia: 'Transferencia', efectivo: 'Efectivo', cheque: 'Cheque', otro: 'Otro' })[medio] ?? medio;
+export const nombreMedio = (medio) => ({ transferencia: 'Transferencia', efectivo: 'Efectivo', cheque: 'Cheque', echeq: 'E-cheq', otro: 'Otro' })[medio] ?? medio;
+
+export const detalleCobro = c => nombreMedio(c.medio) + ' ' + moneda(c.importeCentavos) + (c.retencionCentavos ? ' + retención ' + (c.retencionTipo === 'iibb' ? 'IIBB' : 'Otra') + ' ' + moneda(c.retencionCentavos) : '');

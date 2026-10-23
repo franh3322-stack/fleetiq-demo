@@ -1,6 +1,6 @@
 import { resumenFlota } from './dominio/saldo-mensual.js';
 import { validarNuevoCamion, registrarLecturaKm } from './dominio/camiones.js';
-import { estadoCuentaCliente, viajesAMovimientos } from './dominio/viajes-cobros.js';
+import { estadoCuentaCliente, viajesAMovimientos, totalCobro, validarCobro } from './dominio/viajes-cobros.js';
 import { estadoPapel, limitesPlan, gastoDeReparacion, completarService } from './dominio/vencimientos.js';
 
 export function leerMonto(texto        )         {
@@ -27,7 +27,7 @@ export function demostracion(hoy        ) {
   d.clientes = [{ id: 'cl1', empresaId, nombre: 'Cargas del Sur · Ficticio', plazoDias: 5, saldoInicialCentavos: 0 }];
   d.viajes = [{ id: 'v1', empresaId, camionId: 'c1', clienteId: 'cl1', fecha: mes + '-01', origen: 'Rosario', destino: 'Buenos Aires', tarifaCentavos: 150000000, estado: 'hecho', historialTarifa: [] }];
   d.gastos = [{ id: 'g1', empresaId, camionId: 'c1', fecha: mes + '-02', tipo: 'gasto', categoria: 'combustible', importeCentavos: 50000000 }, { id: 'g2', empresaId, camionId: 'c2', fecha: mes + '-02', tipo: 'gasto', categoria: 'reparacion', importeCentavos: 18000000 }];
-  d.cobros = [{ id: 'co1', empresaId, clienteId: 'cl1', fecha: mes + '-03', importeCentavos: 40000000, medio: 'transferencia' }];
+  d.cobros = [{ id: 'co1', empresaId, clienteId: 'cl1', fecha: mes + '-03', importeCentavos: 30000000, retencionCentavos: 1000000, retencionTipo: 'iibb', medio: 'transferencia' }, { id: 'co2', empresaId, clienteId: 'cl1', fecha: hoy, importeCentavos: 9000000, medio: 'echeq', cobrableDesde: new Date(Date.parse(hoy + 'T00:00:00Z') + 10 * 86400000).toISOString().slice(0,10) }];
   d.lecturas = d.camiones.map((c     , i        ) => ({ id: 'l' + i, empresaId, camionId: c.id, fecha: mes + '-01', km: 152300 + i * 10000, resultado: 'aceptada' }));
   d.papeles = [{ id: 'p1', empresaId, camionId: 'c1', tipo: 'Seguro · Ejemplo', vence: mes + '-05' }];
   d.planes = [{ id: 'pl1', empresaId, camionId: 'c1', tarea: 'Aceite · Ejemplo', cadaKm: 30000, cadaDias: 365, ultimoKm: 123000, ultimaFecha: mes + '-01', proximoKm: 153000 }];
@@ -36,7 +36,7 @@ export function demostracion(hoy        ) {
 export function movimientos(d     ) {
   const ingresos = viajesAMovimientos(d.viajes);
   // S-01 configurable: por cobro exige imputación explícita a un viaje/camión.
-  return [...(d.config.criterio === 'cobro' ? d.cobros.filter((c     ) => !c.anulado && c.viajeId).map((c     ) => ({ id: 'ingreso-cobro-' + c.id, empresaId: d.empresaId, camionId: d.viajes.find((v     ) => v.id === c.viajeId).camionId, fecha: c.fecha, tipo: 'ingreso', importeCentavos: c.importeCentavos })) : ingresos),
+  return [...(d.config.criterio === 'cobro' ? d.cobros.filter((c     ) => !c.anulado && c.viajeId).map((c     ) => ({ id: 'ingreso-cobro-' + c.id, empresaId: d.empresaId, camionId: d.viajes.find((v     ) => v.id === c.viajeId).camionId, fecha: c.fecha, tipo: 'ingreso', importeCentavos: totalCobro(c) })) : ingresos),
     ...d.gastos.filter((g     ) => !g.anulado), ...d.services.filter((s     ) => !s.anulado).map((s     ) => ({ id: 'gasto-service-' + s.id, empresaId: d.empresaId, camionId: s.camionId, fecha: s.fecha, tipo: 'gasto', categoria: 'mantenimiento', importeCentavos: s.costoCentavos })),
     ...d.reparaciones.filter((r     ) => !r.anulado).map(gastoDeReparacion)];
 }
@@ -62,6 +62,7 @@ export function validarDatos(d     , espacio        ) {
       if (r.entregaArchivoId && !d.archivos.some((a     ) => a.id === r.entregaArchivoId)) throw Error('Falta la constancia de entrega del respaldo.');
     }
   }
+  d.cobros.forEach(validarCobro);
   const c = d.config;
   if (!c || !['viaje','cobro'].includes(c.criterio)) throw Error('Revisá el criterio del resultado.');
   for (const k of ['anticipacionDias','anticipacionKm','maxDiasLectura','kmPorDiaMax']) if (!Number.isSafeInteger(c[k]) || c[k] < (k === 'kmPorDiaMax' ? 1 : 0)) throw Error('Revisá las anticipaciones y los kilómetros en Ajustes.');

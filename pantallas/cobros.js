@@ -1,4 +1,4 @@
-import { nombreMedio } from '../ui/formato.js';
+import { detalleCobro } from '../ui/formato.js';
 
 export function opcionesViajesCobro(viajes, clienteId) {
   return viajes
@@ -6,6 +6,7 @@ export function opcionesViajesCobro(viajes, clienteId) {
     .map((v) => [v.id, v.origen + ' → ' + v.destino]);
 }
 
+import * as M from '../dominio/vencimientos.js';
 import * as V from '../dominio/viajes-cobros.js';
 
 import { moneda, cuentaCliente } from '../datos.js';
@@ -63,10 +64,16 @@ export function registrarCobros(app) {
         app.monto(),
         app.campo('medio', 'Cómo te pagó', 'select', [
           ['transferencia', 'Transferencia'],
-          ['efectivo', 'Efectivo'],
           ['cheque', 'Cheque'],
+          ['echeq', 'E-cheq'],
+          ['efectivo', 'Efectivo'],
           ['otro', 'Otro'],
         ]),
+        app.campo('cobrableDesde', 'Se puede cobrar desde (opcional)', 'date', null, false),
+        app.campo('tieneRetencion', '¿Te hicieron retención?', 'select', [['si','Sí'],['no','No']]),
+        app.campo('retencionCentavos', 'Monto de la retención', 'monto', null, false),
+        app.campo('retencionTipo', 'Tipo de retención', 'select', [['iibb','Ingresos Brutos'],['otra','Otra']]),
+        app.campo('archivo', 'Certificado de retención (opcional)', 'file', null, false),
         app.campo(
           'viajeId',
           'Asignar a un viaje (opcional)',
@@ -78,7 +85,7 @@ export function registrarCobros(app) {
       ],
       'Guardar cobro',
       (v) =>
-        app.cambiar((d) => {
+        app.cambiar(async (d) => {
           if (v.importeCentavos <= 0) throw Error('Escribí un monto mayor a cero.');
           const c = {
             id: r?.id ?? app.id(),
@@ -88,7 +95,14 @@ export function registrarCobros(app) {
             importeCentavos: v.importeCentavos,
             medio: v.medio,
             viajeId: v.viajeId || undefined,
+            cobrableDesde: ['cheque','echeq'].includes(v.medio) ? v.cobrableDesde || undefined : undefined,
+            retencionCentavos: v.tieneRetencion === 'si' ? v.retencionCentavos : undefined,
+            retencionTipo: v.tieneRetencion === 'si' ? v.retencionTipo || undefined : undefined,
+            archivoId: v.tieneRetencion === 'si' ? r?.archivoId : undefined,
+            depositadoFecha: r?.depositadoFecha,
           };
+          if (v.tieneRetencion === 'si' && !(c.retencionCentavos > 0)) throw Error('Escribí un monto de retención mayor a cero.');
+          if (v.tieneRetencion === 'si') await app.ponerArchivo(d, v.archivo, c);
           const cl = d.clientes.find((x) => x.id === v.clienteId);
           const estado = cuentaCliente(
             {
@@ -114,10 +128,16 @@ export function registrarCobros(app) {
             );
           } else d.cobros.push(c);
         }),
-      r ?? {
-        clienteId: cid ?? '',
-      },
+      { ...r, clienteId: r?.clienteId ?? cid ?? '', tieneRetencion: r?.retencionCentavos ? 'si' : 'no', retencionTipo: r?.retencionTipo ?? 'iibb' },
     );
+    const actualizar = () => {
+      const retiene = f.entradas.tieneRetencion.input.value === 'si';
+      for (const n of ['retencionCentavos','retencionTipo','archivo']) f.entradas[n].input.parentElement.hidden = !retiene;
+      f.entradas.cobrableDesde.input.parentElement.hidden = !['cheque','echeq'].includes(f.entradas.medio.input.value);
+    };
+    f.entradas.tieneRetencion.input.onchange = actualizar;
+    f.entradas.medio.input.onchange = actualizar;
+    actualizar();
     f.entradas.clienteId.input.onchange = () => {
       const input = f.entradas.viajeId.input;
       input.replaceChildren(new Option('Sin asignar a un viaje', ''));
@@ -141,30 +161,40 @@ export function registrarCobros(app) {
     );
     for (const c of app.datos.clientes) {
       const s = app.cuenta(c);
-      app.filaRegistro(
+      const tarjeta = app.filaRegistro(
         app.root,
         c.nombre,
-        'Saldo ' +
-          moneda(s.saldoCentavos) +
-          ' · Vencido ' +
-          moneda(s.vencidoCentavos) +
-          ' · A favor ' +
-          moneda(s.aFavorCentavos) +
-          ' · Plazo ' +
-          (c.plazoDias ?? 30) +
-          ' días',
+        '',
         [
           app.btn('Registrar cobro', () => app.editarCobro(null, c.id)),
           app.btn('Corregir cliente', () => app.editarCliente(c)),
         ],
       );
+      const resumen = tarjeta.querySelector('p');
+      resumen.append(app.e('strong', 'Debe ' + moneda(Math.max(0, s.saldoCentavos))));
+      for (const texto of [
+        ...(s.vencidoCentavos > 0 ? ['Vencido ' + moneda(s.vencidoCentavos)] : []),
+        ...(s.aFavorCentavos > 0 ? ['A favor ' + moneda(s.aFavorCentavos)] : []),
+        'Plazo: ' + (c.plazoDias ?? 30) + ' días',
+        ...(s.retenidoCentavos > 0 ? ['Retenciones: ' + moneda(s.retenidoCentavos)] : []),
+      ]) resumen.append(app.e('br'), app.e('span', texto));
     }
+    const cartera = app.seccion('Cheques para depositar');
+    for (const c of V.chequesEnCartera(app.datos.cobros)) app.filaRegistro(cartera,
+      app.cliente(c.clienteId) + ' · ' + detalleCobro(c),
+      c.cobrableDesde ? 'Se puede cobrar desde ' + M.formatoFecha(c.cobrableDesde) : 'Sin fecha de cobro',
+      [app.btn('Ya lo deposité', async () => { try { await app.cambiar(d => {
+        const item = d.cobros.find(x => x.id === c.id);
+        const nuevo = V.depositarCheque(item, app.hoy());
+        app.historial(d, 'cobros', item, 'Cheque depositado');
+        Object.assign(item, nuevo);
+      }); app.pintar(); } catch (err) { app.fallo(err); } })]);
     const h = app.seccion('Cobros cargados');
     for (const c of [...app.datos.cobros].reverse())
       app.filaRegistro(
         h,
-        app.cliente(c.clienteId) + ' · ' + moneda(c.importeCentavos),
-        c.fecha + ' · ' + nombreMedio(c.medio) + (c.anulado ? ' · Cobro anulado · ' + c.anulado.motivo : ''),
+        app.cliente(c.clienteId) + ' · ' + detalleCobro(c),
+        M.formatoFecha(c.fecha) + (c.depositadoFecha ? ' · Depositado ' + M.formatoFecha(c.depositadoFecha) : '') + (c.anulado ? ' · Cobro anulado · ' + c.anulado.motivo : ''),
         app.acciones('cobros', c, app.editarCobro),
       );
   }
