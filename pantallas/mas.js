@@ -66,9 +66,10 @@ export function registrarMas(app) {
           'number',
         ),
         app.campo('kmPorDiaMax', 'Revisar saltos mayores a cuántos km por día', 'number'),
+        app.campo('diasAcreditacion', 'Preguntar por cheques depositados después de cuántos días', 'number'),
         app.campo('criterio', 'Cuándo contar el ingreso en el resultado', 'select', [
           ['viaje', 'Por fecha del viaje hecho (supuesto inicial)'],
-          ['cobro', 'Por fecha del cobro asignado a viaje'],
+          ['cobro', 'Cuando entra la plata (cheques al acreditarse)'],
         ]),
       ],
       'Guardar ajustes',
@@ -83,7 +84,7 @@ export function registrarMas(app) {
             delete p.anticipacionKm;
           }
         }),
-      app.datos.config,
+      {diasAcreditacion:3,...app.datos.config},
     );
     const respaldo = app.seccion('Respaldo');
     respaldo.append(

@@ -59,7 +59,7 @@ export function registrarInicio(app) {
           'p',
           app.datos.config.criterio === 'viaje'
             ? 'Los ingresos cuentan por fecha del viaje hecho.'
-            : 'Los ingresos cuentan por fecha del cobro asignado a un viaje. Los anticipos sin viaje se ven en Cobros.',
+            : 'Los cheques cuentan cuando se acreditan; los demás pagos y la retención vigente, en fecha del cobro asignado a un viaje. Los anticipos sin viaje se ven en Cobros.',
           'criterio',
         ),
       );
@@ -126,6 +126,7 @@ export function registrarInicio(app) {
     );
     atender.append(
       app.e('p', 'Pendiente de cobrar: ' + moneda(pendiente)),
+      app.e('p', 'En cheques sin cobrar: ' + moneda(app.datos.clientes.reduce((s,c)=>s+app.cuenta(c).chequesSinCobrarCentavos,0))),
       app.btn('Ver cobros', () => app.cambiarPagina('Cobros')),
     );
     if (!avisos.length) atender.append(app.e('p', 'No hay avisos con lo cargado.'));

@@ -1,6 +1,6 @@
 import { resumenFlota } from './dominio/saldo-mensual.js';
 import { validarNuevoCamion, registrarLecturaKm } from './dominio/camiones.js';
-import { estadoCuentaCliente, viajesAMovimientos, totalCobro, validarCobro } from './dominio/viajes-cobros.js';
+import { estadoCuentaCliente, viajesAMovimientos, partesCobro, validarCobro, migrarCheque, iniciarCheque, cambiarEstadoCheque } from './dominio/viajes-cobros.js';
 import { estadoPapel, limitesPlan, gastoDeReparacion, completarService } from './dominio/vencimientos.js';
 
 export function leerMonto(texto        )         {
@@ -18,7 +18,7 @@ export const moneda = (centavos        , decimales = false)         => new Intl.
 export function vacio(espacio        ) {
   if (!['demo', 'real'].includes(espacio)) throw Error('Elegí un espacio válido.');
   return { version: 1, espacio, empresaId: espacio, camiones: [], lecturas: [], clientes: [], viajes: [], cobros: [], gastos: [], papeles: [], planes: [], services: [], reparaciones: [], archivos: [], historial: [], soporte: [],
-    config: { anticipacionDias: 30, anticipacionKm: 1000, maxDiasLectura: 15, kmPorDiaMax: 1500, criterio: 'viaje' } };
+    config: { anticipacionDias: 30, anticipacionKm: 1000, maxDiasLectura: 15, kmPorDiaMax: 1500, diasAcreditacion: 3, criterio: 'viaje' } };
 }
 export function demostracion(hoy        ) {
   const d      = vacio('demo'), empresaId = 'demo';
@@ -28,6 +28,11 @@ export function demostracion(hoy        ) {
   d.viajes = [{ id: 'v1', empresaId, camionId: 'c1', clienteId: 'cl1', fecha: mes + '-01', origen: 'Rosario', destino: 'Buenos Aires', tarifaCentavos: 150000000, estado: 'hecho', historialTarifa: [] }];
   d.gastos = [{ id: 'g1', empresaId, camionId: 'c1', fecha: mes + '-02', tipo: 'gasto', categoria: 'combustible', importeCentavos: 50000000 }, { id: 'g2', empresaId, camionId: 'c2', fecha: mes + '-02', tipo: 'gasto', categoria: 'reparacion', importeCentavos: 18000000 }];
   d.cobros = [{ id: 'co1', empresaId, clienteId: 'cl1', fecha: mes + '-03', importeCentavos: 30000000, retencionCentavos: 1000000, retencionTipo: 'iibb', medio: 'transferencia' }, { id: 'co2', empresaId, clienteId: 'cl1', fecha: hoy, importeCentavos: 9000000, medio: 'echeq', cobrableDesde: new Date(Date.parse(hoy + 'T00:00:00Z') + 10 * 86400000).toISOString().slice(0,10) }];
+  d.cobros[1] = iniciarCheque(d.cobros[1]);
+  const ejemplo = (id        , importeCentavos        , extra = {}) => iniciarCheque({id, empresaId, clienteId:'cl1', fecha:mes+'-01', importeCentavos, medio:'cheque', ...extra}       );
+  d.cobros.push(cambiarEstadoCheque(ejemplo('co3',5000000),'depositado',mes+'-01'));
+  d.cobros.push(cambiarEstadoCheque(ejemplo('co4',9000000),'acreditado',mes+'-01'));
+  d.cobros.push(cambiarEstadoCheque(ejemplo('co5',7000000,{retencionCentavos:200000,retencionTipo:'iibb'}),'rechazado',mes+'-01',{estadoRetencion:'por-confirmar',motivo:'Ejemplo ficticio: consultar al contador'}));
   d.lecturas = d.camiones.map((c     , i        ) => ({ id: 'l' + i, empresaId, camionId: c.id, fecha: mes + '-01', km: 152300 + i * 10000, resultado: 'aceptada' }));
   d.papeles = [{ id: 'p1', empresaId, camionId: 'c1', tipo: 'Seguro · Ejemplo', vence: mes + '-05' }];
   d.planes = [{ id: 'pl1', empresaId, camionId: 'c1', tarea: 'Aceite · Ejemplo', cadaKm: 30000, cadaDias: 365, ultimoKm: 123000, ultimaFecha: mes + '-01', proximoKm: 153000 }];
@@ -36,7 +41,7 @@ export function demostracion(hoy        ) {
 export function movimientos(d     ) {
   const ingresos = viajesAMovimientos(d.viajes);
   // S-01 configurable: por cobro exige imputación explícita a un viaje/camión.
-  return [...(d.config.criterio === 'cobro' ? d.cobros.filter((c     ) => !c.anulado && c.viajeId).map((c     ) => ({ id: 'ingreso-cobro-' + c.id, empresaId: d.empresaId, camionId: d.viajes.find((v     ) => v.id === c.viajeId).camionId, fecha: c.fecha, tipo: 'ingreso', importeCentavos: totalCobro(c) })) : ingresos),
+  return [...(d.config.criterio === 'cobro' ? d.cobros.filter((c     ) => c.empresaId === d.empresaId && !c.anulado && c.viajeId).flatMap((c     ) => partesCobro(c).map(p => ({ id: 'ingreso-cobro-' + c.id + '-' + p.tipo, empresaId: d.empresaId, camionId: d.viajes.find((v     ) => v.id === c.viajeId && v.empresaId === c.empresaId).camionId, fecha: p.fecha, tipo: 'ingreso', importeCentavos: p.importeCentavos }))) : ingresos),
     ...d.gastos.filter((g     ) => !g.anulado), ...d.services.filter((s     ) => !s.anulado).map((s     ) => ({ id: 'gasto-service-' + s.id, empresaId: d.empresaId, camionId: s.camionId, fecha: s.fecha, tipo: 'gasto', categoria: 'mantenimiento', importeCentavos: s.costoCentavos })),
     ...d.reparaciones.filter((r     ) => !r.anulado).map(gastoDeReparacion)];
 }
@@ -66,6 +71,7 @@ export function validarDatos(d     , espacio        ) {
   const c = d.config;
   if (!c || !['viaje','cobro'].includes(c.criterio)) throw Error('Revisá el criterio del resultado.');
   for (const k of ['anticipacionDias','anticipacionKm','maxDiasLectura','kmPorDiaMax']) if (!Number.isSafeInteger(c[k]) || c[k] < (k === 'kmPorDiaMax' ? 1 : 0)) throw Error('Revisá las anticipaciones y los kilómetros en Ajustes.');
+  if (c.diasAcreditacion !== undefined && (!Number.isSafeInteger(c.diasAcreditacion) || c.diasAcreditacion < 0)) throw Error('Revisá los días de acreditación en Ajustes.');
   d.camiones.forEach((v     , i        ) => validarNuevoCamion(v, d.camiones.slice(0, i)));
   for (const l of d.lecturas) {
     registrarLecturaKm([], l, c);
@@ -86,4 +92,8 @@ export function validarDatos(d     , espacio        ) {
   return d;
 }
 export const exportar = (d     )         => JSON.stringify(validarDatos(d, d.espacio), null, 2);
-export function importar(texto        , espacio        ) { let d; try { d = JSON.parse(texto); } catch { throw Error('No se pudo leer el respaldo. Elegí el archivo exportado por FleetIQ.'); } return validarDatos(d, espacio); }
+export function migrarDatos(d     ) {
+  validarDatos(d,d.espacio);
+  return validarDatos({...d, config:{diasAcreditacion:3,...d.config}, cobros:d.cobros.map(migrarCheque)},d.espacio);
+}
+export function importar(texto        , espacio        ) { let d; try { d = JSON.parse(texto); } catch { throw Error('No se pudo leer el respaldo. Elegí el archivo exportado por FleetIQ.'); } validarDatos(d,espacio); return migrarDatos(d); }

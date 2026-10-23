@@ -1,4 +1,4 @@
-import { validarDatos } from './datos.js';
+import { validarDatos, migrarDatos } from './datos.js';
 export const entidades = ['camiones','viajes','clientes','cobros','gastos','papeles','planes','services','reparaciones','lecturas','historial','archivos'];
 const cache = new WeakMap();
 const pedir = r => new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.errorBloqueado || r.error);});
@@ -8,7 +8,7 @@ export function convertirArchivo(a) {
   const [cabecera,base64]=a.datos.split(',');const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
   const {datos,...resto}=a;return {...resto,blob:new Blob([bytes],{type:cabecera.slice(5).split(';')[0]})};
 }
-export function preparar(d){return {...d,archivos:d.archivos.map(convertirArchivo)};}
+export function preparar(d){return {...migrarDatos(d),archivos:d.archivos.map(convertirArchivo)};}
 // La comparación evita escribir entidades o archivos que no cambiaron.
 // Los Blob son inmutables: la app conserva su identidad entre cargas.
 export function cambios(antes,despues){
@@ -54,7 +54,7 @@ async function escribir(db,d,antes,migracion=false){
  }
  if(migracion)tx.objectStore('estado').delete('datos');await fin;cache.set(db,{...structuredClone({...d,archivos:[]}),archivos:d.archivos.map(a=>({...a}))});
 }
-export async function leer(db){const tx=db.transaction([...entidades,'meta']);const requests=[pedir(tx.objectStore('meta').get('datos')),...entidades.map(n=>pedir(tx.objectStore(n).getAll()))];const [meta,...listas]=await Promise.all(requests);if(!meta)return undefined;const d={...meta};entidades.forEach((n,i)=>d[n]=listas[i].sort((a,b)=>a.orden-b.orden).map(r=>r.registro));cache.set(db,d);return d;}
+export async function leer(db){const tx=db.transaction([...entidades,'meta']);const requests=[pedir(tx.objectStore('meta').get('datos')),...entidades.map(n=>pedir(tx.objectStore(n).getAll()))];const [meta,...listas]=await Promise.all(requests);if(!meta)return undefined;const d={...meta};entidades.forEach((n,i)=>d[n]=listas[i].sort((a,b)=>a.orden-b.orden).map(r=>r.registro));cache.set(db,d);return migrarDatos(d);}
 export async function guardar(db,datos){const d=preparar(datos);await escribir(db,d,cache.get(db));datos.archivos=d.archivos;}
 export async function paraRespaldo(d){return {...d,archivos:await Promise.all(d.archivos.map(async a=>{if(a.datos)return a;const bytes=new Uint8Array(await a.blob.arrayBuffer());let bin='';for(const b of bytes)bin+=String.fromCharCode(b);const {blob,...resto}=a;return {...resto,datos:'data:'+blob.type+';base64,'+btoa(bin)};}))};}
 export async function adjunto(file, empresaId) {
